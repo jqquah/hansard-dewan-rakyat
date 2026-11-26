@@ -850,11 +850,12 @@ def do_convert_job(issue: dict, user: str) -> None:
     run(["git", "push", "-q", "-f", "origin", branch])
     existing = gh_json("pr", "list", "-R", REPO, "--head", branch, "--author", user,
                        "--state", "open", "--json", "number") or []
+    body = (f"Closes #{issue['number']}\n\njob: {job}\nsittings: {len(rows)}\n"
+            f"files: {len(done)}\nconverter: hansard.py {VERSION}\n")
     if existing:
+        gh("pr", "edit", str(existing[0]["number"]), "-R", REPO, "--body", body)  # keep the version line true
         say(f"  updated PR #{existing[0]['number']}")
     else:
-        body = (f"Closes #{issue['number']}\n\njob: {job}\nsittings: {len(rows)}\n"
-                f"files: {len(done)}\nconverter: hansard.py {VERSION}\n")
         url = gh("pr", "create", "-R", REPO, "--head", branch if SAME_REPO else f"{user}:{branch}", "--base", "main",
                  "--title", f"{job}: {len(rows)} sittings", "--body", body)
         say(f"  opened {url}")

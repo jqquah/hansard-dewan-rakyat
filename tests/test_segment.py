@@ -98,6 +98,15 @@ class Furniture(unittest.TestCase):
         self.assertIn("1.", h.strip_furniture([lines])[0])
 
 
+class EmptyText(unittest.TestCase):
+    def test_scan_without_text_is_rejected(self):  # an empty file loses nothing, so fidelity alone passes it
+        with self.assertRaises(ValueError):
+            h.text_check([[""], ["12"], [""]])
+
+    def test_normal_page_passes(self):
+        h.text_check([["Tuan Yang di-Pertua: " + "kata " * 100]])
+
+
 class Fidelity(unittest.TestCase):
     def test_detects_changed_word(self):
         pages = [["Tuan Cha Kee Chin [Rasah]: Terima kasih."]]

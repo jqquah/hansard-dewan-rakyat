@@ -9,6 +9,7 @@ One file, no LLM. Commands:
   python hansard.py check [PATH ...]    validate output files (CI uses this)
   python hansard.py export OUTDIR       build the download files (ZIP and speeches JSONL)
   python hansard.py crawl               maintainers: rebuild manifest/sittings.csv
+  python hansard.py survey              maintainers: test-convert samples from every Parliament
   python hansard.py seed                maintainers: create labels and one Issue per meeting
 """
 from __future__ import annotations
@@ -38,7 +39,8 @@ CACHE = ROOT / ".cache"
 SITE = "https://www.parlimen.gov.my"
 TREE = SITE + "/hansard-dewan-rakyat.html?uweb=dr&arkib=yes&ajx={ajx}"
 UA = f"hansard-dewan-rakyat-text/{VERSION} (+https://github.com/{REPO})"
-DELAY = 2.0          # seconds between requests to parlimen.gov.my
+DELAY = 3.0          # seconds between requests to parlimen.gov.my (be polite: many volunteers share it)
+MIN_CHARS_PER_PAGE = 300  # less than this means the PDF has no usable text layer (scan without OCR)
 MAX_FILE = 300_000   # bytes; GitHub code search skips files over ~350 KB
 CLAIM_WAIT = 120     # seconds to wait for the claim bot
 
@@ -532,9 +534,19 @@ def get_pdf(row: dict) -> bytes:
     return b
 
 
+def text_check(pages: list[list[str]]) -> None:
+    """Stop when a PDF has (almost) no text. The fidelity proof cannot catch this:
+    an empty file loses nothing, so it would pass."""
+    chars = sum(len(squash("".join(p))) for p in pages)
+    if not pages or chars / len(pages) < MIN_CHARS_PER_PAGE:
+        raise ValueError(f"the PDF has almost no text ({chars} characters on {len(pages)} pages). "
+                         "It is probably a scan without OCR. A maintainer must look at it.")
+
+
 def convert_row(row: dict, out_root: Path | None = None) -> list[Path]:
     pdf = get_pdf(row)
     pages = strip_furniture(extract_pages(pdf))
+    text_check(pages)
     blocks = segment(pages)
     parts = render(blocks)
     fidelity(pages, "\n".join(parts))
@@ -924,7 +936,7 @@ def cmd_work(args):
     for n in range(args.jobs):
         run(["git", "checkout", "-q", "upstream/main"], check=False)
         # 1. own unfinished work first (continue after a crash)
-        own = find_own_issue(user, handled)
+        own = None if args.verify_only else find_own_issue(user, handled)
         if own:
             say(f"Continue my claimed job #{own['number']}")
             handled.add(own["number"])
@@ -943,6 +955,9 @@ def cmd_work(args):
                     break
             if took:
                 continue
+        if args.verify_only:
+            say("No pull requests to verify now.")
+            break
         # 3. a new conversion job
         todo = gh_json("issue", "list", "-R", REPO, "--state", "open", "--label", "status:todo",
                        "--json", "number,title,body", "--limit", "20",
@@ -960,6 +975,55 @@ def cmd_work(args):
             break
     run(["git", "checkout", "-q", "upstream/main"], check=False)
     say("\nDone.")
+
+def cmd_survey(args):
+    """Maintainers: test-convert sample sittings from every Parliament. Writes nothing to data/.
+    Reports text per page, speeches, unusual speaker labels, and errors."""
+    rows = read_manifest()
+    by_p: dict[int, list[dict]] = {}
+    for r in rows:
+        by_p.setdefault(int(r["parlimen"]), []).append(r)
+    picks = []
+    for p in sorted(by_p):
+        if args.parlimen and p not in args.parlimen:
+            continue
+        group = by_p[p]
+        n = min(args.per, len(group))
+        picks += [group[(i * (len(group) - 1)) // max(n - 1, 1)] for i in range(n)]
+    report = []
+    say(f"Survey of {len(picks)} sittings. Downloads wait {DELAY}s each.\n")
+    say(f"{'sitting':<24}{'pages':>6}{'chars/p':>8}{'empty':>6}{'speech':>7}{'odd':>5}  result")
+    with tempfile.TemporaryDirectory() as tmp:
+        for r in picks:
+            rec = {"sitting_id": r["sitting_id"], "parlimen": int(r["parlimen"]), "pdf": pdf_url(r["pdf_path"])}
+            try:
+                pdf = get_pdf(r)
+                rec["mb"] = round(len(pdf) / 1e6, 1)
+                pages = strip_furniture(extract_pages(pdf))
+                chars = [len(squash("".join(p))) for p in pages]
+                blocks = segment(pages)
+                labels = [b[1] for b in blocks if b[0] == "speech"]
+                odd = sorted({x for x in labels if not HONORIFIC.match(x) and not re.match(
+                    r"(Beberapa|Seorang|Ahli|Minister|Assistant|Deputy|Speaker|Menteri|Timbalan|Setiausaha|Mr)", x)})
+                rec.update(pages=len(pages), chars_per_page=round(sum(chars) / max(len(pages), 1)),
+                           empty_pages=sum(1 for c in chars if c < 50), speeches=len(labels),
+                           speakers=len(set(labels)), odd_labels=odd[:20],
+                           headings=sum(1 for b in blocks if b[0] == "heading"))
+                files = convert_row(r, out_root=Path(tmp))
+                rec["files"] = len(files)
+                rec["result"] = "OK"
+            except Exception as e:  # noqa: BLE001
+                rec["result"] = f"FAIL: {str(e)[:300]}"
+            report.append(rec)
+            say(f"{rec['sitting_id']:<24}{rec.get('pages', '-'):>6}{rec.get('chars_per_page', '-'):>8}"
+                f"{rec.get('empty_pages', '-'):>6}{rec.get('speeches', '-'):>7}{len(rec.get('odd_labels', [])):>5}  "
+                f"{rec['result'][:70]}")
+            if not args.keep_pdfs:
+                (CACHE / (r["sitting_id"] + ".pdf")).unlink(missing_ok=True)
+    Path(args.out).write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
+    fails = [x for x in report if x["result"] != "OK"]
+    say(f"\n{len(report) - len(fails)} OK, {len(fails)} FAIL. Full report: {args.out}")
+
 
 def cmd_reopen(args):
     """Maintainers: put jobs back to status:todo (after a converter change, or a bad merge)."""
@@ -1041,6 +1105,7 @@ def main():
     w = sub.add_parser("work")
     w.add_argument("--jobs", type=int, default=1)
     w.add_argument("--no-verify", action="store_true", help="only take conversion jobs")
+    w.add_argument("--verify-only", action="store_true", help="only verify other people's pull requests")
     w.set_defaults(fn=cmd_work)
     c = sub.add_parser("convert")
     c.add_argument("sitting_id", nargs="+")
@@ -1055,6 +1120,12 @@ def main():
     cr = sub.add_parser("crawl")
     cr.add_argument("--parlimen", type=int, help="only this Parliament (for testing)")
     cr.set_defaults(fn=cmd_crawl)
+    sv = sub.add_parser("survey")
+    sv.add_argument("--per", type=int, default=2, help="sittings per Parliament")
+    sv.add_argument("--parlimen", type=int, nargs="*", help="only these Parliaments")
+    sv.add_argument("--out", default="survey.json")
+    sv.add_argument("--keep-pdfs", action="store_true")
+    sv.set_defaults(fn=cmd_survey)
     ro = sub.add_parser("reopen")
     ro.add_argument("job", nargs="*", help="job ids; or use --all")
     ro.add_argument("--all", action="store_true")

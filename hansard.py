@@ -678,11 +678,20 @@ def job_of(text: str | None) -> str | None:
     return m.group(1) if m else None
 
 
-def find_own_issue(user: str):
-    issues = gh_json("issue", "list", "-R", REPO, "--assignee", user, "--state", "open",
-                     "--label", "status:claimed", "--json", "number,title,body", "--limit", "10") or []
-    issues += gh_json("issue", "list", "-R", REPO, "--assignee", user, "--state", "open",
-                      "--label", "status:changes-needed", "--json", "number,title,body", "--limit", "10") or []
+def find_own_issue(user: str, handled: set):
+    """My unfinished job. Skip jobs done in this run, and claimed jobs that already have my PR
+    (the bot moves their label to status:needs-verify a short time after the PR opens)."""
+    claimed = gh_json("issue", "list", "-R", REPO, "--assignee", user, "--state", "open",
+                      "--label", "status:claimed", "--json", "number,title,body", "--limit", "10") or []
+    redo = gh_json("issue", "list", "-R", REPO, "--assignee", user, "--state", "open",
+                   "--label", "status:changes-needed", "--json", "number,title,body", "--limit", "10") or []
+    if claimed:
+        prs = gh_json("pr", "list", "-R", REPO, "--author", user, "--state", "open",
+                      "--json", "body", "--limit", "100") or []
+        with_pr = {int(m.group(1)) for p in prs
+                   for m in [re.search(r"closes\s+#(\d+)", p.get("body") or "", re.I)] if m}
+        claimed = [i for i in claimed if i["number"] not in with_pr]
+    issues = [i for i in claimed + redo if i["number"] not in handled]
     return issues[0] if issues else None
 
 
@@ -787,12 +796,14 @@ def cmd_work(args):
     if run(["git", "status", "--porcelain", "--untracked-files=no"]):
         die("you have uncommitted changes in this folder; commit or remove them first")
     say(f"\nWorking as {user}. Jobs to do: {args.jobs}\n")
+    handled: set = set()  # job Issues done in this run; never do one twice
     for n in range(args.jobs):
         run(["git", "checkout", "-q", "upstream/main"], check=False)
         # 1. own unfinished work first (continue after a crash)
-        own = find_own_issue(user)
+        own = find_own_issue(user, handled)
         if own:
             say(f"Continue my claimed job #{own['number']}")
+            handled.add(own["number"])
             do_convert_job(own, user)
             continue
         # 2. verification (another person's PR)
@@ -815,6 +826,7 @@ def cmd_work(args):
         took = False
         for issue in todo:
             if claim("issue", issue["number"], user, "/claim"):
+                handled.add(issue["number"])
                 do_convert_job(issue, user)
                 took = True
                 break

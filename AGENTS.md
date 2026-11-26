@@ -26,7 +26,21 @@ If `gh auth status` says that the volunteer is not logged in, ask the volunteer 
 
 ## Step 2: Get the repository
 
-If the folder `hansard-dewan-rakyat` does not exist in the current folder, run:
+Always work in the folder `hansard-work` in the volunteer's home folder, so that nothing goes
+into their other projects. macOS or Linux:
+
+```bash
+mkdir -p ~/hansard-work && cd ~/hansard-work
+```
+
+Windows (PowerShell):
+
+```text
+mkdir -Force $HOME\hansard-work; cd $HOME\hansard-work
+```
+
+Run all the next commands in that folder.
+If the folder `hansard-dewan-rakyat` does not exist in `hansard-work`, run:
 
 ```bash
 gh repo fork jqquah/hansard-dewan-rakyat --clone

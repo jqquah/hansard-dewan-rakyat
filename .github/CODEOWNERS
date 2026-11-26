@@ -1,0 +1,7 @@
+# Maintainers review changes to code, workflows and the manifest.
+/hansard.py           @jqquah
+/tools/               @jqquah
+/tests/               @jqquah
+/.github/             @jqquah
+/manifest/            @jqquah
+/certs/               @jqquah

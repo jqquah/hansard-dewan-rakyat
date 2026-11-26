@@ -1,0 +1,30 @@
+name: Conversion error
+description: The text in data/ is wrong compared to the PDF (a cut speaker name, text in the wrong place, a missing page).
+labels: ["conversion-error"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you. Do not edit files in `data/` by hand. Maintainers fix the script, add a test, and convert again.
+  - type: input
+    id: file
+    attributes:
+      label: File
+      placeholder: data/2026/2026-11-25.md
+    validations:
+      required: true
+  - type: input
+    id: where
+    attributes:
+      label: Page marker or line
+      description: The nearest `[p.N]` marker, or the line number on GitHub.
+      placeholder: "[p.47]"
+    validations:
+      required: true
+  - type: textarea
+    id: wrong
+    attributes:
+      label: What is wrong
+      description: Copy the wrong text, and say what the PDF shows.
+    validations:
+      required: true

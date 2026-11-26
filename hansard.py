@@ -7,6 +7,7 @@ One file, no LLM. Commands:
   python hansard.py work [--jobs N]     volunteer loop: claim, convert, open PR, verify
   python hansard.py convert SITTING_ID  convert one sitting (for testing)
   python hansard.py check [PATH ...]    validate output files (CI uses this)
+  python hansard.py export OUTDIR       build the download files (ZIP and speeches JSONL)
   python hansard.py crawl               maintainers: rebuild manifest/sittings.csv
   python hansard.py seed                maintainers: create labels and one Issue per meeting
 """
@@ -28,7 +29,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 REPO = os.environ.get("HANSARD_REPO", "jqquah/hansard-dewan-rakyat")
 ROOT = Path(__file__).resolve().parent
 MANIFEST = ROOT / "manifest" / "sittings.csv"
@@ -190,8 +191,24 @@ def date_from_pdf(pdf_path: str) -> str | None:
     return f"{y}-{mo}-{d}"
 
 
-def assign_ids(rows: list[dict]) -> None:
-    """sitting_id = date (plus a suffix when two PDFs share a date); job_id = meeting + chunk."""
+def assign_ids(rows: list[dict], old: dict | None = None) -> None:
+    """sitting_id = date (plus a suffix when two PDFs share a date); job_id = meeting + chunk.
+    Sittings already in the manifest keep their ids, so finished jobs never change.
+    New sittings go into new jobs."""
+    old = old or {}
+    known = [r for r in rows if r["pdf_path"] in old]
+    new = [r for r in rows if r["pdf_path"] not in old]
+    for r in known:
+        r["sitting_id"], r["job_id"], r["date"] = (old[r["pdf_path"]][k] for k in ("sitting_id", "job_id", "date"))
+    if known:
+        taken = {r["sitting_id"] for r in known}
+        _assign_new(new, taken, {r["job_id"] for r in known})
+        rows.sort(key=lambda r: (r["date"], r["sitting_id"]))
+        return
+    _assign_new(rows, set(), set())
+
+
+def _assign_new(rows: list[dict], taken_ids: set, taken_jobs: set) -> None:
     for r in rows:
         r["date"] = date_from_pdf(r["pdf_path"]) or r.get("date") or ""
     by_date: dict[str, list[dict]] = {}
@@ -208,6 +225,9 @@ def assign_ids(rows: list[dict]) -> None:
                 suffix = re.sub(r"^dr-?", "", suffix)
                 suffix = re.sub(r"\d{2}-?\d{2}-?\d{4}", "", suffix).strip("-")
                 r["sitting_id"] = f"{date}-{suffix or i + 1}"
+    for r in rows:
+        if r["sitting_id"] in taken_ids:   # same date as a sitting that is already known
+            r["sitting_id"] = f"{r['sitting_id']}-{re.sub(r'[^a-z0-9]+', '-', Path(r['pdf_path']).stem.lower()).strip('-')}"
     ids = [r["sitting_id"] for r in rows]
     for sid in {x for x in ids if ids.count(x) > 1}:
         for i, r in enumerate(x for x in rows if x["sitting_id"] == sid):
@@ -218,8 +238,18 @@ def assign_ids(rows: list[dict]) -> None:
         by_meeting.setdefault(r["meeting_id"], []).append(r)
     for mid, group in by_meeting.items():
         n = -(-len(group) // JOB_SIZE)
+        if not taken_jobs:
+            for i, r in enumerate(group):
+                r["job_id"] = mid if n == 1 else f"{mid}-j{i * n // len(group) + 1}"
+            continue
+        # new sittings in a meeting that already has jobs: start new job numbers after the last one
+        used = [int(m.group(1)) for j in taken_jobs if j.startswith(mid)
+                for m in [re.fullmatch(re.escape(mid) + r"(?:-j(\d+))?", j)] if m and m.group(1)]
+        used += [1] if mid in taken_jobs else []
+        start = max(used, default=0) + 1
         for i, r in enumerate(group):
-            r["job_id"] = mid if n == 1 else f"{mid}-j{i * n // len(group) + 1}"
+            k = start + i * n // len(group)
+            r["job_id"] = mid if (start == 1 and n == 1) else f"{mid}-j{k}"
 
 
 def cmd_crawl(args):
@@ -246,7 +276,8 @@ def cmd_crawl(args):
     # the current meeting is only on the main page, not in the archive tree
     if not args.parlimen or args.parlimen == current_parlimen():
         rows += current_meeting_rows({r["pdf_path"] for r in rows})
-    assign_ids(rows)
+    old = {r["pdf_path"]: r for r in read_manifest()} if MANIFEST.exists() else {}
+    assign_ids(rows, old)
     MANIFEST.parent.mkdir(exist_ok=True)
     with open(MANIFEST, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=MANIFEST_FIELDS, extrasaction="ignore", lineterminator="\n")
@@ -333,7 +364,7 @@ def is_heading(line: str) -> bool:
     s = line.strip()
     letters = [c for c in s if c.isalpha()]
     return (3 <= len(letters) and len(s) <= 90 and not any(c.islower() for c in s)
-            and not s.endswith(",") and speaker_at(s) is None)
+            and not re.search(r"[.,;?!]$", s) and speaker_at(s) is None)  # "PDRM." ends a sentence
 
 
 def segment(pages: list[list[str]]):
@@ -614,6 +645,79 @@ def cmd_check(args):
     sys.exit(1 if errs else 0)
 
 # --------------------------------------------------------------------------
+# export: one ZIP of the Markdown, and one JSON line per speech
+# --------------------------------------------------------------------------
+
+LABEL_LINE = re.compile(r"^\*\*(?P<label>.+?):\*\*\s?(?P<rest>.*)$")
+PAGE = re.compile(r"\[p\.(\d+)\]")
+
+
+def iter_records(meta: dict, body: str, state: dict):
+    """Yield one record per speech or text block. state carries page and heading across parts."""
+    cur = None
+    prev_heading = False
+    for block in body.split("\n\n"):
+        block = block.strip()
+        if not block:
+            continue
+        if block.startswith("### "):
+            # a heading can span several lines in the PDF; join lines that come one after another
+            line = block[4:].strip()
+            state["heading"] = f"{state['heading']} {line}" if prev_heading and state["heading"] else line
+            prev_heading = True
+            continue
+        if not PAGE.fullmatch(block):
+            prev_heading = False
+        m = LABEL_LINE.match(block)
+        if m or cur is None:
+            if cur:
+                yield cur
+            label = m.group("label") if m else None
+            cur = {"sitting_id": meta["sitting_id"], "date": meta["date"], "parlimen": meta["parlimen"],
+                   "penggal": meta["penggal"], "mesyuarat": meta["mesyuarat"], "seq": state["seq"],
+                   "speaker": label, "page": state["page"], "heading": state["heading"],
+                   "source_url": meta["source_url"], "text": ""}
+            state["seq"] += 1
+            block = m.group("rest") if m else block
+        pages = [int(x) for x in PAGE.findall(block)]
+        text = PAGE.sub("", block).strip()
+        if text:
+            cur["text"] = (cur["text"] + "\n\n" + text).strip()
+        if pages:
+            state["page"] = pages[-1]
+    if cur:
+        yield cur
+
+
+def cmd_export(args):
+    import gzip
+    import zipfile
+    out = Path(args.outdir)
+    out.mkdir(parents=True, exist_ok=True)
+    data = Path(args.data)
+    files = sorted(data.rglob("*.md"))
+    by_sitting: dict[str, list[tuple[dict, str, Path]]] = {}
+    for f in files:
+        meta, rest = parse_front_matter(f.read_text(encoding="utf-8"))
+        body = rest.split("\n\n", 1)[1] if "\n\n" in rest else ""
+        by_sitting.setdefault(meta["sitting_id"], []).append((meta, body, f))
+    n = 0
+    with gzip.open(out / "hansard-dewan-rakyat-speeches.jsonl.gz", "wt", encoding="utf-8") as g, \
+            zipfile.ZipFile(out / "hansard-dewan-rakyat-markdown.zip", "w", zipfile.ZIP_DEFLATED) as z:
+        for sid in sorted(by_sitting):
+            parts = sorted(by_sitting[sid], key=lambda x: x[0]["part"])
+            state = {"seq": 1, "page": 1, "heading": None}
+            for meta, body, f in parts:
+                z.write(f, f.relative_to(data.parent).as_posix())
+                for rec in iter_records(meta, body, state):
+                    if rec["speaker"] is None and not rec["text"]:
+                        continue
+                    g.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                    n += 1
+        z.write(MANIFEST, "manifest/sittings.csv")
+    say(f"exported {len(by_sitting)} sittings, {n} records to {out}")
+
+# --------------------------------------------------------------------------
 # doctor
 # --------------------------------------------------------------------------
 
@@ -837,6 +941,31 @@ def cmd_work(args):
     run(["git", "checkout", "-q", "upstream/main"], check=False)
     say("\nDone.")
 
+def cmd_reopen(args):
+    """Maintainers: put jobs back to status:todo (after a converter change, or a bad merge)."""
+    issues = gh_json("issue", "list", "-R", REPO, "--state", "all", "--limit", "2000",
+                     "--json", "number,body,state,assignees,labels") or []
+    for i in issues:
+        job = job_of(i.get("body"))
+        if not job or (args.job and job not in args.job):
+            continue
+        if not args.job and not args.all:
+            continue
+        for pr in gh_json("pr", "list", "-R", REPO, "--state", "open", "--search", f"Closes #{i['number']}",
+                          "--json", "number") or []:
+            gh("pr", "close", str(pr["number"]), "-R", REPO, "--comment", f"Closed: job reopened ({args.reason}).")
+        if i["state"] != "OPEN":
+            gh("issue", "reopen", str(i["number"]), "-R", REPO)
+        cmd = ["issue", "edit", str(i["number"]), "-R", REPO, "--add-label", "status:todo"]
+        for l in i["labels"]:
+            if l["name"].startswith("status:") and l["name"] != "status:todo":
+                cmd += ["--remove-label", l["name"]]
+        for a in i["assignees"]:
+            cmd += ["--remove-assignee", a["login"]]
+        gh(*cmd)
+        gh("issue", "comment", str(i["number"]), "-R", REPO, "--body", f"Reopened: {args.reason}. This job is free again.")
+        say(f"reopened #{i['number']} {job}")
+
 # --------------------------------------------------------------------------
 # seed: maintainers create labels and one Issue per meeting
 # --------------------------------------------------------------------------
@@ -899,9 +1028,18 @@ def main():
     k = sub.add_parser("check")
     k.add_argument("paths", nargs="*")
     k.set_defaults(fn=cmd_check)
+    e = sub.add_parser("export")
+    e.add_argument("outdir")
+    e.add_argument("--data", default=str(DATA))
+    e.set_defaults(fn=cmd_export)
     cr = sub.add_parser("crawl")
     cr.add_argument("--parlimen", type=int, help="only this Parliament (for testing)")
     cr.set_defaults(fn=cmd_crawl)
+    ro = sub.add_parser("reopen")
+    ro.add_argument("job", nargs="*", help="job ids; or use --all")
+    ro.add_argument("--all", action="store_true")
+    ro.add_argument("--reason", required=True)
+    ro.set_defaults(fn=cmd_reopen)
     s = sub.add_parser("seed")
     s.add_argument("--limit", type=int, default=0)
     s.add_argument("--oldest-first", action="store_true")

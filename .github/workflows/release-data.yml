@@ -1,0 +1,46 @@
+name: release-data
+# Builds the download files once a day. (Merges by the bot do not start workflows,
+# so this runs on a schedule, and skips the build when data/ has not changed.)
+on:
+  schedule:
+    - cron: "40 19 * * *"   # 03:40 Malaysia time
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: release-data
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Find what changed
+        id: tree
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ ! -d data ]; then echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          tree=$(git rev-parse HEAD:data)
+          old=$(gh release view data-latest --json body --jq .body 2>/dev/null | grep -oE 'data-tree: [0-9a-f]+' | cut -d' ' -f2 || true)
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          if [ "$tree" = "$old" ]; then echo "skip=true" >> "$GITHUB_OUTPUT"; fi
+      - if: steps.tree.outputs.skip != 'true'
+        run: python3 hansard.py export out
+      - if: steps.tree.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          n=$(find data -name '*.md' ! -name '*.part*' | wc -l | tr -d ' ')
+          body="All converted sittings so far: $n of $(($(wc -l < manifest/sittings.csv) - 1)).
+          Updated $(date -u +%Y-%m-%d). Built from commit ${GITHUB_SHA::7}.
+
+          - hansard-dewan-rakyat-markdown.zip: every file in data/, plus manifest/sittings.csv
+          - hansard-dewan-rakyat-speeches.jsonl.gz: one JSON object per speech (sitting_id, date, parlimen, penggal, mesyuarat, seq, speaker, page, heading, source_url, text)
+
+          data-tree: ${{ steps.tree.outputs.tree }}"
+          if gh release view data-latest >/dev/null 2>&1; then
+            gh release edit data-latest --notes "$body" --title "Latest data ($n sittings)"
+          else
+            gh release create data-latest --notes "$body" --title "Latest data ($n sittings)" --latest
+          fi
+          gh release upload data-latest out/* --clobber

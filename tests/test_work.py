@@ -46,5 +46,33 @@ class FindOwnIssue(unittest.TestCase):
         self.assertEqual(h.find_own_issue("me", set())["number"], 9)
 
 
+class Recrawl(unittest.TestCase):
+    """A new crawl must never change the ids of sittings that are already known."""
+
+    def rows(self, n, start=1):
+        return [{"pdf_path": f"/files/hindex/pdf/DR-{d:02d}112026.pdf", "meeting_id": "p15-s5-m3"}
+                for d in range(start, start + n)]
+
+    def test_known_ids_stay_and_new_sittings_get_new_jobs(self):
+        first = self.rows(25)
+        h.assign_ids(first)
+        old = {r["pdf_path"]: dict(r) for r in first}
+        second = self.rows(28)          # 3 new sittings published later
+        h.assign_ids(second, old)
+        for r in second:
+            if r["pdf_path"] in old:
+                self.assertEqual((r["sitting_id"], r["job_id"]), (old[r["pdf_path"]]["sitting_id"], old[r["pdf_path"]]["job_id"]))
+        new_jobs = {r["job_id"] for r in second if r["pdf_path"] not in old}
+        self.assertEqual(new_jobs, {"p15-s5-m3-j3"})
+
+    def test_meeting_with_one_job_gets_j2(self):
+        first = self.rows(5)
+        h.assign_ids(first)
+        self.assertEqual({r["job_id"] for r in first}, {"p15-s5-m3"})
+        second = self.rows(7)
+        h.assign_ids(second, {r["pdf_path"]: dict(r) for r in first})
+        self.assertEqual({r["job_id"] for r in second[5:]}, {"p15-s5-m3-j2"})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,1 +1,8 @@
-blank_issues_enabled: true
+blank_issues_enabled: false
+contact_links:
+  - name: How to help with the conversion
+    url: https://github.com/jqquah/hansard-dewan-rakyat/blob/main/CONTRIBUTING.md
+    about: Read this first. One command does the work.
+  - name: Questions
+    url: https://github.com/jqquah/hansard-dewan-rakyat/discussions
+    about: Ask and answer questions here.

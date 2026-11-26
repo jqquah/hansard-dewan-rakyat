@@ -74,6 +74,16 @@ class Labels(unittest.TestCase):
                           "[Dato’ Sri Azalina Othman Said]"])
 
 
+class Headings(unittest.TestCase):
+    def test_acronym_ending_sentence_is_not_heading(self):  # 2026-06-22: "NCII." and "PDRM."
+        for line in ("NCII.", "PDRM.", "NFA?", "M.C.A.", "ANTHONY FREDERICKS, A.M.N."):
+            self.assertFalse(h.is_heading(line), line)
+
+    def test_real_headings(self):
+        for line in ("DOA", "PERTANYAAN-PERTANYAAN BAGI JAWAB LISAN", "USUL:", "RANG UNDANG-UNDANG:"):
+            self.assertTrue(h.is_heading(line), line)
+
+
 class Furniture(unittest.TestCase):
     def test_page_header_removed(self):
         pages = h.strip_furniture([["DR. 25.11.2026", "2", "PERKESO, masih dimasukkan"]])

@@ -1,0 +1,8 @@
+# Only GitHub Actions. pymupdf is pinned on purpose: a new version can change the output
+# bytes, so it is updated by hand together with VERSION (see MAINTAINING.md).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

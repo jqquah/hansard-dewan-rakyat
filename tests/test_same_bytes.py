@@ -11,10 +11,10 @@ spec = importlib.util.spec_from_file_location("hansard", HERE.parent / "hansard.
 h = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(h)
 
-# Made on macOS, 26 Nov 2026. 2026-10-09 is byte-identical to PR #285.
+# Made on macOS with VERSION 1.1.0, 26 Nov 2026. Update these when VERSION changes.
 EXPECTED = {
-    "data/2008/2008-04-29.md": "bfd560b7a8381209464ad60b4dfde59b2a9e6a985e2c823a8635a0dbb530593b",
-    "data/2026/2026-10-09.md": "fb421a062cdf201c02e4894d391403c4319d091613d2e3200b0f12834e812d5c",
+    "data/2008/2008-04-29.md": "4ed92fd30a3c984f85921e8f60f071867ccd7334138f9d922954cc7b0d4a56a4",
+    "data/2026/2026-10-09.md": "23996f8c35dcfc110ca3f826b7ba38ff39957eb5ec41df41d5533beabe2b1e6b",
 }
 
 

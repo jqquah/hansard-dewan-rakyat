@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+title: "Hansard Dewan Rakyat as searchable text"
+message: "If you use this text, cite the official Hansard of the Dewan Rakyat, and you can also cite this dataset."
+type: dataset
+authors:
+  - name: "hansard-dewan-rakyat contributors"
+repository-code: "https://github.com/jqquah/hansard-dewan-rakyat"
+url: "https://github.com/jqquah/hansard-dewan-rakyat"
+abstract: >-
+  The Hansard (official record of debates) of the Dewan Rakyat, Parliament of Malaysia,
+  from 1959 to now, converted from the official PDFs to Markdown text with speaker markers,
+  page markers and source checksums.
+keywords:
+  - Hansard
+  - Malaysia
+  - Parliament
+  - Dewan Rakyat
+  - parliamentary debates
+license: MIT

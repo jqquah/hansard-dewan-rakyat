@@ -1,5 +1,9 @@
 # Hansard Dewan Rakyat as searchable text
 
+[![tests](https://github.com/jqquah/hansard-dewan-rakyat/actions/workflows/tests.yml/badge.svg)](https://github.com/jqquah/hansard-dewan-rakyat/actions/workflows/tests.yml)
+[![Status board](https://img.shields.io/badge/progress-status%20board-blue)](https://github.com/jqquah/hansard-dewan-rakyat/issues?q=is%3Aissue+is%3Aopen+label%3Aboard)
+[![Download](https://img.shields.io/badge/download-latest%20data-green)](https://github.com/jqquah/hansard-dewan-rakyat/releases/tag/data-latest)
+
 The official record (Hansard) of the Dewan Rakyat, Parliament of Malaysia, from 1959 to now,
 converted from PDF to Markdown text. You can search it on GitHub, read it in a browser, or download it.
 
@@ -7,11 +11,20 @@ converted from PDF to Markdown text. You can search it on GitHub, read it in a b
 The PDF on parlimen.gov.my is the authoritative record. This text is a copy for search.
 Each file links to its source PDF and records the PDF's SHA-256.
 
-## Search
+## Read, search and download
 
-- On GitHub: use the search box at the top of this repository, for example
+- **Read:** open the `data/` folder and choose a year and a date. You do not need an account.
+- **Search on GitHub:** use the search box at the top of this page, for example
   [`subsidi diesel`](https://github.com/search?q=repo%3Ajqquah%2Fhansard-dewan-rakyat+%22subsidi+diesel%22&type=code).
-- On your computer: `git clone` this repository, then use `grep -r "your words" data/`.
+  GitHub needs a free account for search.
+- **Download everything:** the [latest data release](https://github.com/jqquah/hansard-dewan-rakyat/releases/tag/data-latest)
+  has a ZIP of all files, and a JSONL file with one record per speech
+  (date, speaker, page, heading, source link, text) for spreadsheets, databases and research.
+  It updates every day.
+- **On your computer:** `git clone https://github.com/jqquah/hansard-dewan-rakyat`, then `grep -r "your words" data/`.
+
+Text only appears here after a second volunteer has verified it. Until then it is in the open
+[pull requests](https://github.com/jqquah/hansard-dewan-rakyat/pulls).
 
 ## Files
 
@@ -55,7 +68,20 @@ converts each meeting again, and the bot merges only when both results are the s
 
 Run the tests with `python -m unittest discover tests`.
 
+## Project files
+
+| File | For |
+|---|---|
+| [CONTRIBUTING.md](CONTRIBUTING.md) | volunteers: how to help |
+| [AGENTS.md](AGENTS.md) | AI agents that help a volunteer |
+| [MAINTAINING.md](MAINTAINING.md) | maintainers |
+| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | everyone |
+| [SECURITY.md](SECURITY.md) | reporting a security problem |
+| [CITATION.cff](CITATION.cff) | citing this dataset |
+
 ## Licence
 
-The code is MIT licensed. The Hansard text is a public record of the Parliament of Malaysia;
-this project claims no rights in it.
+- **Code** (`hansard.py`, `tools/`, `tests/`): [MIT](LICENSE).
+- **What this project adds to the text** (the markers, metadata and file structure): [CC0](https://creativecommons.org/publicdomain/zero/1.0/), no rights reserved.
+- **The Hansard text itself** is the official record of the Parliament of Malaysia. This project claims no rights in it.
+  Any rights stay with their owner. If you publish it, cite the official Hansard and link to the source PDF in each file.

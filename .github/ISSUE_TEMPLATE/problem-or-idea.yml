@@ -1,0 +1,20 @@
+name: Problem with the script, or an idea
+description: hansard.py fails on your computer, the bot did something wrong, or you have an idea.
+labels: ["discussion"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, or what is your idea
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output of the command (if a command failed)
+      render: text
+  - type: input
+    id: system
+    attributes:
+      label: Your system
+      placeholder: "Windows 11, Python 3.12"

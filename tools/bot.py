@@ -156,6 +156,17 @@ def handle_pr():
     number, author = pr["number"], pr["user"]["login"]
     issue_no = linked_issue(pr["body"] or "")
     problems = []
+    is_job = re.search(r"^job:\s*\S+", pr["body"] or "", re.M) is not None
+    if not is_job:
+        # A code or documentation PR: tests.yml checks it and a maintainer reviews it.
+        # It must not change converted data, because only hansard.py work makes data.
+        paths = [f["path"] for f in ghj("pr", "view", str(number), "-R", REPO, "--json", "files")["files"]]
+        if any(p.startswith("data/") for p in paths):
+            reply("pr", number, "Files in `data/` can only come from `hansard.py work` (see CONTRIBUTING.md). "
+                                "Remove them from this pull request.")
+            sys.exit(1)
+        print("not a conversion PR; tests.yml and a maintainer review it")
+        return
     if not issue_no:
         problems.append("The PR body must say `Closes #<issue number>`.")
     else:

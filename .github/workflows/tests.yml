@@ -4,7 +4,7 @@ on:
     branches: [main]
     paths: ["hansard.py", "tests/**", "tools/**", "requirements.txt", ".github/workflows/tests.yml"]
   pull_request:
-    paths: ["hansard.py", "tests/**", "tools/**", "requirements.txt"]
+    paths: ["hansard.py", "tests/**", "tools/**", "requirements.txt", ".github/workflows/**"]
   workflow_dispatch:
 jobs:
   test:

@@ -10,7 +10,7 @@ Each job is one parliamentary meeting (about 15 to 35 sittings). One job takes a
 ## What you need (one time only)
 
 1. A GitHub account.
-2. Python 3.9 or newer: https://www.python.org/downloads/
+2. Python 3.10 or newer: https://www.python.org/downloads/
 3. Git: https://git-scm.com/downloads
 4. GitHub CLI: https://cli.github.com
 5. Log in to GitHub CLI. Run this, then follow the steps on the screen:

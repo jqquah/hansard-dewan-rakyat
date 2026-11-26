@@ -626,7 +626,7 @@ def cmd_doctor(args):
         say(("  OK   " if good else "  FAIL ") + text)
 
     say("Checking this computer:")
-    item(sys.version_info >= (3, 9), f"Python {sys.version.split()[0]} (need 3.9+)")
+    item(sys.version_info >= (3, 10), f"Python {sys.version.split()[0]} (need 3.10+)")
     try:
         import pymupdf
         item(True, f"pymupdf {pymupdf.__version__}")

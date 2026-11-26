@@ -32,6 +32,16 @@ If the folder `hansard-dewan-rakyat` does not exist in the current folder, run:
 gh repo fork jqquah/hansard-dewan-rakyat --clone
 ```
 
+If that command fails with "cannot be forked" or "cannot own both a parent and fork",
+the volunteer is the repository owner or a maintainer. Then run this instead:
+
+```bash
+gh repo clone jqquah/hansard-dewan-rakyat
+```
+
+The script detects this case and pushes branches to the main repository.
+For any other error, show it to the volunteer and stop.
+
 Then go into the folder:
 
 ```bash

@@ -32,6 +32,8 @@ At the end, tell me which jobs you did.
 ```
 
 The agent only runs commands. It does not read or write the Hansard text, so it uses very few tokens.
+Your agent can ask you to approve commands such as `gh repo fork` and `python hansard.py work`.
+Approve them: they are the commands in AGENTS.md.
 
 ## Option B: run it yourself
 

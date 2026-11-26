@@ -33,7 +33,8 @@ Old sittings (before about 1990) come from scanned pages, so they can have OCR e
 
 ## Help with the conversion
 
-There are more than 7,000 sittings. Volunteers do the conversion on their own computers.
+There are 4,121 sittings in 281 jobs. Volunteers do the conversion on their own computers,
+because parlimen.gov.my does not accept connections from GitHub's servers (tested 26 Nov 2026).
 It takes one command, and it needs no AI. See **[CONTRIBUTING.md](CONTRIBUTING.md)**.
 
 Progress: see the [Status board](../../issues?q=is%3Aissue+is%3Aopen+label%3Aboard).

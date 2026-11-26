@@ -892,6 +892,24 @@ def do_verify_job(pr: dict, user: str) -> None:
     gh("pr", "comment", str(pr["number"]), "-R", REPO, "--body", body)
 
 
+def self_update() -> None:
+    """Always run the newest code. A fork can be old, and old code makes files that the check rejects
+    (26 Nov 2026: a volunteer's fork ran 1.0.0 after 1.1.0 was released)."""
+    latest = subprocess.run(["git", "show", "upstream/main:hansard.py"], cwd=ROOT, capture_output=True).stdout
+    mine = Path(__file__).read_bytes()
+    if latest.replace(b"\r\n", b"\n") == mine.replace(b"\r\n", b"\n"):
+        return
+    if os.environ.get("HANSARD_UPDATED"):
+        die("the update did not work; run: git checkout upstream/main")
+    req_before = (ROOT / "requirements.txt").read_bytes()
+    run(["git", "checkout", "-q", "upstream/main"])
+    say("Updated to the newest version of hansard.py. Restarting.")
+    if (ROOT / "requirements.txt").read_bytes() != req_before:
+        run([sys.executable, "-m", "pip", "install", "-q", "-r", "requirements.txt"], capture=False)
+    os.environ["HANSARD_UPDATED"] = "1"
+    os.execv(sys.executable, [sys.executable, str(Path(__file__).resolve())] + sys.argv[1:])
+
+
 def cmd_work(args):
     if not cmd_doctor(args):
         die("this computer is not ready")
@@ -899,6 +917,7 @@ def cmd_work(args):
     setup_git()
     if run(["git", "status", "--porcelain", "--untracked-files=no"]):
         die("you have uncommitted changes in this folder; commit or remove them first")
+    self_update()
     say(f"\nWorking as {user}. Jobs to do: {args.jobs}\n")
     handled: set = set()  # job Issues done in this run; never do one twice
     for n in range(args.jobs):

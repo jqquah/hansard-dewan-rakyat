@@ -114,7 +114,14 @@ def handle_comment():
         set_status("issue", number, "status:blocked")
         reply(kind, number, "Marked as blocked. A maintainer will look at the error above.")
     elif cmd == "/verify" and is_pr:
+        # use the PR as it is now, not the event's copy (26 Nov 2026: a claim was given on a closed PR)
+        live = ghj("pr", "view", str(number), "-R", REPO, "--json", "state,labels,assignees")
+        labels = [l["name"] for l in live["labels"]]
+        assignees = [a["login"] for a in live["assignees"]]
         author = item["user"]["login"]
+        if live["state"] != "OPEN":
+            reply(kind, number, f"@{user} this pull request is closed.")
+            return
         if user == author:
             reply(kind, number, f"@{user} you cannot verify your own pull request.")
             return
@@ -130,6 +137,13 @@ def handle_comment():
             return
         issue_no = linked_issue(item.get("body") or "")
         if cmd == "/verified":
+            live = ghj("pr", "view", str(number), "-R", REPO, "--json", "state,headRefOid,body,labels")
+            reason = merge_blocker(live, body, lambda: validate(number, live["body"] or "", author,
+                                                                  live["headRefOid"])[0])
+            if reason:
+                set_status("pr", number, "status:blocked")
+                reply(kind, number, f"Not merged: {reason} A maintainer will look.")
+                return
             p = subprocess.run(["gh", "pr", "merge", str(number), "-R", REPO, "--squash", "--delete-branch=false"],
                                capture_output=True, text=True)
             if p.returncode != 0:
@@ -146,27 +160,28 @@ def handle_comment():
                 set_status("issue", issue_no, "status:blocked")
             reply(kind, number, "The two conversions do not agree. A maintainer will look.")
 
+def merge_blocker(live: dict, comment: str, recheck) -> str | None:
+    """Reasons not to merge after /verified. recheck() runs the data checks again."""
+    if live["state"] != "OPEN":
+        return "the pull request is closed."
+    if "status:verifying" not in [l["name"] for l in live["labels"]]:
+        return "the pull request is not in status:verifying."
+    m = re.search(r"head:\s*([0-9a-f]{40})", comment)
+    if not m or m.group(1) != live["headRefOid"]:
+        return "the verifier compared a different commit from the current head of this pull request."
+    problems = recheck()
+    if problems:
+        return "the data checks fail now: " + " ".join(problems)[:1500]
+    return None
+
 # ---------------------------------------------------------------------------
 
 
-def handle_pr():
-    """Validate a PR's data files with the main branch's code. PR code never runs."""
-    ev = json.load(open(os.environ["GITHUB_EVENT_PATH"]))
-    pr = ev["pull_request"]
-    number, author = pr["number"], pr["user"]["login"]
-    issue_no = linked_issue(pr["body"] or "")
-    problems = []
-    is_job = re.search(r"^job:\s*\S+", pr["body"] or "", re.M) is not None
-    if not is_job:
-        # A code or documentation PR: tests.yml checks it and a maintainer reviews it.
-        # It must not change converted data, because only hansard.py work makes data.
-        paths = [f["path"] for f in ghj("pr", "view", str(number), "-R", REPO, "--json", "files")["files"]]
-        if any(p.startswith("data/") for p in paths):
-            reply("pr", number, "Files in `data/` can only come from `hansard.py work` (see CONTRIBUTING.md). "
-                                "Remove them from this pull request.")
-            sys.exit(1)
-        print("not a conversion PR; tests.yml and a maintainer review it")
-        return
+def validate(number: int, body: str, author: str, head: str) -> tuple[list[str], int | None, list[str]]:
+    """Check a conversion PR's data files with the main branch's code. Returns (problems, issue, paths)."""
+    issue_no = linked_issue(body)
+    problems: list[str] = []
+    issue: dict = {}
     if not issue_no:
         problems.append("The PR body must say `Closes #<issue number>`.")
     else:
@@ -189,7 +204,6 @@ def handle_pr():
         problems.append("A conversion PR can only change files in `data/`. Other files: "
                         + ", ".join(f"`{p}`" for p in outside[:10]))
     if not problems:
-        head = pr["head"]["sha"]
         subprocess.run(["git", "fetch", "-q", "origin", f"pull/{number}/head"], cwd=ROOT, check=True)
         with tempfile.TemporaryDirectory() as tmp:
             for p in paths:
@@ -210,6 +224,28 @@ def handle_pr():
             if r is not None and r.returncode != 0:
                 out = r.stdout.replace(tmp + "/", "")
                 problems.append("`hansard.py check` failed:\n\n```\n" + out[-3000:] + "\n```")
+    return problems, issue_no, paths
+
+
+def handle_pr():
+    """Validate a PR's data files with the main branch's code. PR code never runs."""
+    ev = json.load(open(os.environ["GITHUB_EVENT_PATH"]))
+    pr = ev["pull_request"]
+    number, author = pr["number"], pr["user"]["login"]
+    issue_no = linked_issue(pr["body"] or "")
+    problems = []
+    is_job = re.search(r"^job:\s*\S+", pr["body"] or "", re.M) is not None
+    if not is_job:
+        # A code or documentation PR: tests.yml checks it and a maintainer reviews it.
+        # It must not change converted data, because only hansard.py work makes data.
+        paths = [f["path"] for f in ghj("pr", "view", str(number), "-R", REPO, "--json", "files")["files"]]
+        if any(p.startswith("data/") for p in paths):
+            reply("pr", number, "Files in `data/` can only come from `hansard.py work` (see CONTRIBUTING.md). "
+                                "Remove them from this pull request.")
+            sys.exit(1)
+        print("not a conversion PR; tests.yml and a maintainer review it")
+        return
+    problems, issue_no, paths = validate(number, pr["body"] or "", author, pr["head"]["sha"])
     if problems:
         set_status("pr", number, "status:changes-needed")
         if issue_no:

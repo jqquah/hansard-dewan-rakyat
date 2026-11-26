@@ -14,6 +14,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -25,8 +26,16 @@ STATUSES = ["status:todo", "status:claimed", "status:needs-verify", "status:veri
             "status:changes-needed", "status:blocked", "status:done"]
 
 
+RETRY = re.compile(r"rate limit|secondary rate|HTTP 50[234]|timeout|connection reset", re.I)
+
+
 def gh(*args: str, check: bool = True) -> str:
-    p = subprocess.run(["gh", *args], capture_output=True, text=True)
+    """Run gh. Wait and retry when GitHub rate-limits the bot (about 1,000 calls per hour per repo)."""
+    for attempt in range(8):
+        p = subprocess.run(["gh", *args], capture_output=True, text=True)
+        if p.returncode == 0 or not RETRY.search(p.stderr or ""):
+            break
+        time.sleep(min(60 * (attempt + 1), 300))
     if check and p.returncode != 0:
         raise RuntimeError(f"gh {' '.join(args)}: {p.stderr}")
     return p.stdout.strip()
@@ -45,14 +54,22 @@ def iso(t: dt.datetime) -> str:
     return t.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def set_status(kind: str, number: int, status: str):
-    """Exactly one status label at a time."""
-    labels = [l["name"] for l in ghj(kind, "view", str(number), "-R", REPO, "--json", "labels")["labels"]]
+def set_status(kind: str, number: int, status: str, labels: list[str] | None = None, extra: tuple = ()):
+    """Exactly one status label at a time. One API call when the current labels are known."""
+    if labels is None:
+        labels = [l["name"] for l in ghj(kind, "view", str(number), "-R", REPO, "--json", "labels")["labels"]]
     remove = [l for l in labels if l.startswith("status:") and l != status]
-    args = [kind, "edit", str(number), "-R", REPO, "--add-label", status]
+    args = [kind, "edit", str(number), "-R", REPO, "--add-label", status, *extra]
     for r in remove:
         args += ["--remove-label", r]
     gh(*args)
+
+
+def live_state(kind: str, number: int) -> tuple[str, list[str], list[str]]:
+    """The item as it is now. Never trust the event's copy: it was taken when the comment was posted,
+    so two quick /claim comments both saw a free job (26 Nov 2026, issue #284)."""
+    d = ghj(kind, "view", str(number), "-R", REPO, "--json", "state,labels,assignees")
+    return d["state"], [l["name"] for l in d["labels"]], [a["login"] for a in d["assignees"]]
 
 
 def reply(kind: str, number: int, text: str):
@@ -83,11 +100,10 @@ def handle_comment():
     number = item["number"]
     is_pr = "pull_request" in item
     kind = "pr" if is_pr else "issue"
-    labels = [l["name"] for l in item["labels"]]
-    assignees = [a["login"] for a in item["assignees"]]
+    state, labels, assignees = live_state(kind, number)
 
     if cmd == "/claim" and not is_pr:
-        if item["state"] != "open" or "status:todo" not in labels or assignees:
+        if state != "OPEN" or "status:todo" not in labels or assignees:
             reply(kind, number, f"@{user} this job is not free. Run `python hansard.py work` to get another one.")
             return
         mine = ghj("issue", "list", "-R", REPO, "--assignee", user, "--label", "status:claimed",
@@ -95,8 +111,7 @@ def handle_comment():
         if len(mine) >= MAX_CLAIMS:
             reply(kind, number, f"@{user} you already have {len(mine)} claimed jobs. Finish one first.")
             return
-        gh("issue", "edit", str(number), "-R", REPO, "--add-assignee", user)
-        set_status("issue", number, "status:claimed")
+        set_status("issue", number, "status:claimed", labels, extra=("--add-assignee", user))
         reply(kind, number, f"Claimed by @{user}.\n\nclaimed-at: {iso(now())}\n"
                             f"This claim ends after {CLAIM_HOURS} hours if there is no pull request.")
     elif cmd == "/release":
@@ -114,12 +129,8 @@ def handle_comment():
         set_status("issue", number, "status:blocked")
         reply(kind, number, "Marked as blocked. A maintainer will look at the error above.")
     elif cmd == "/verify" and is_pr:
-        # use the PR as it is now, not the event's copy (26 Nov 2026: a claim was given on a closed PR)
-        live = ghj("pr", "view", str(number), "-R", REPO, "--json", "state,labels,assignees")
-        labels = [l["name"] for l in live["labels"]]
-        assignees = [a["login"] for a in live["assignees"]]
         author = item["user"]["login"]
-        if live["state"] != "OPEN":
+        if state != "OPEN":
             reply(kind, number, f"@{user} this pull request is closed.")
             return
         if user == author:
@@ -128,8 +139,7 @@ def handle_comment():
         if "status:needs-verify" not in labels or assignees:
             reply(kind, number, f"@{user} this pull request is not free to verify.")
             return
-        gh("pr", "edit", str(number), "-R", REPO, "--add-assignee", user)
-        set_status("pr", number, "status:verifying")
+        set_status("pr", number, "status:verifying", labels, extra=("--add-assignee", user))
         reply(kind, number, f"Verification by @{user}.\n\nclaimed-at: {iso(now())}")
     elif cmd in ("/verified", "/reject") and is_pr:
         author = item["user"]["login"]
@@ -292,7 +302,24 @@ def sweep():
                 gh("pr", "edit", str(pr["number"]), "-R", REPO, "--remove-assignee", a["login"])
             set_status("pr", pr["number"], "status:needs-verify")
             reply("pr", pr["number"], "Verification ended with no result. It is free to verify again.")
-    # 3. status board
+    # 3. repair: a merged PR's job must be done (a failed or rate-limited bot run can leave it wrong)
+    issues = ghj("issue", "list", "-R", REPO, "--state", "all", "--limit", "2000",
+                 "--json", "number,state,labels,body") or []
+    by_no = {i["number"]: i for i in issues}
+    merged = ghj("pr", "list", "-R", REPO, "--state", "merged", "--limit", "300", "--json", "number,body,labels") or []
+    for pr in merged:
+        n = linked_issue(pr["body"])
+        if n in by_no:
+            i = by_no[n]
+            names = [l["name"] for l in i["labels"]]
+            if "status:done" not in names:
+                set_status("issue", n, "status:done", names)
+            if i["state"] == "OPEN":
+                gh("issue", "close", str(n), "-R", REPO, check=False)
+        pr_names = [l["name"] for l in pr["labels"]]
+        if "status:done" not in pr_names:
+            set_status("pr", pr["number"], "status:done", pr_names)
+    # 4. status board
     counts = {}
     for s in STATUSES:
         state = "all" if s == "status:done" else "open"

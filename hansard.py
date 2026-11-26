@@ -19,6 +19,7 @@ import csv
 import hashlib
 import json
 import os
+import random
 import re
 import shutil
 import subprocess
@@ -962,6 +963,10 @@ def cmd_work(args):
         todo = gh_json("issue", "list", "-R", REPO, "--state", "open", "--label", "status:todo",
                        "--json", "number,title,body", "--limit", "20",
                        "--search", "sort:created-asc no:assignee") or []
+        # spread volunteers over the 10 oldest jobs, so people who start together do not all claim the same one
+        head = todo[:10]
+        random.shuffle(head)
+        todo = head + todo[10:]
         took = False
         for issue in todo:
             if claim("issue", issue["number"], user, "/claim"):

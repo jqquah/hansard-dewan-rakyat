@@ -6,12 +6,14 @@ permissions:
   issues: write
   pull-requests: write
   contents: write
-concurrency:
-  group: bot-${{ github.event.issue.number }}
-  cancel-in-progress: false
 jobs:
   command:
-    if: startsWith(github.event.comment.body, '/')
+    # Only comments that start with "/" enter the queue, so a normal comment cannot replace a waiting command.
+    if: startsWith(github.event.comment.body, '/') && github.event.comment.user.type != 'Bot'
+    concurrency:
+      group: bot-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

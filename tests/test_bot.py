@@ -38,3 +38,13 @@ class MergeBlocker(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Retry(unittest.TestCase):
+    def test_rate_limit_messages_are_retried(self):
+        for msg in ("API rate limit exceeded for installation ID 123",
+                    "You have exceeded a secondary rate limit", "HTTP 502: Bad Gateway"):
+            self.assertTrue(bot.RETRY.search(msg), msg)
+
+    def test_real_errors_are_not_retried(self):
+        self.assertIsNone(bot.RETRY.search("GraphQL: Could not resolve to a PullRequest"))

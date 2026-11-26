@@ -852,7 +852,7 @@ def cmd_seed(args):
     order = sorted(jobs, key=lambda j: jobs[j][0]["date"], reverse=not args.oldest_first)
     made = 0
     for jid in order:
-        if jid in have_ids:
+        if jid in have_ids or (args.only and jid != args.only):
             continue
         rows = jobs[jid]
         title = f"{jid}: {rows[0]['meeting_title']} ({len(rows)} sittings)"
@@ -893,7 +893,7 @@ def main():
     s = sub.add_parser("seed")
     s.add_argument("--limit", type=int, default=0)
     s.add_argument("--oldest-first", action="store_true")
-    s.add_argument("--board", action="store_true", help="also create the status board issue")
+    s.add_argument("--only", help="create the Issue for this one job id")
     s.set_defaults(fn=cmd_seed)
     a = ap.parse_args()
     r = a.fn(a)
